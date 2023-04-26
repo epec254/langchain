@@ -5,7 +5,7 @@ from typing import Any, List, Optional, Sequence, Tuple
 
 from pydantic import Field
 
-from langchain.agents.agent import Agent, AgentOutputParser
+from langchain.agents.agent import Agent, AgentOutputParser, validate_all_base_tools
 from langchain.agents.conversational_chat.output_parser import ConvoOutputParser
 from langchain.agents.conversational_chat.prompt import (
     PREFIX,
@@ -29,7 +29,7 @@ from langchain.schema import (
     BaseOutputParser,
     HumanMessage,
 )
-from langchain.tools.base import BaseTool
+from langchain.tools.structured import BaseStructuredTool
 
 
 class ConversationalChatAgent(Agent):
@@ -58,7 +58,7 @@ class ConversationalChatAgent(Agent):
     @classmethod
     def create_prompt(
         cls,
-        tools: Sequence[BaseTool],
+        tools: Sequence[BaseStructuredTool],
         system_message: str = PREFIX,
         human_message: str = SUFFIX,
         input_variables: Optional[List[str]] = None,
@@ -99,10 +99,15 @@ class ConversationalChatAgent(Agent):
         return thoughts
 
     @classmethod
+    def _validate_tools(cls, tools: Sequence[BaseStructuredTool]) -> None:
+        super()._validate_tools(tools)
+        validate_all_base_tools(cls.__name__, tools)
+
+    @classmethod
     def from_llm_and_tools(
         cls,
         llm: BaseLanguageModel,
-        tools: Sequence[BaseTool],
+        tools: Sequence[BaseStructuredTool],
         callback_manager: Optional[BaseCallbackManager] = None,
         output_parser: Optional[AgentOutputParser] = None,
         system_message: str = PREFIX,

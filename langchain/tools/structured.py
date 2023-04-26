@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from functools import partial
 from inspect import signature
 from typing import (
     Any,
@@ -10,37 +9,26 @@ from typing import (
     Dict,
     Generic,
     Optional,
+    Sequence,
+    Tuple,
     Type,
     TypeVar,
     Union,
 )
 
-from pydantic import (
-    BaseModel,
-    Extra,
-    Field,
-    create_model,
-    validate_arguments,
-    validator,
-)
+from pydantic import BaseModel, Extra, Field, create_model, validate_arguments
 from pydantic.generics import GenericModel
+
 from langchain.callbacks import get_callback_manager
 from langchain.callbacks.base import BaseCallbackManager
-
 from langchain.utilities.async_utils import async_or_sync_call
 
-
-class SchemaAnnotationError(TypeError):
-    """Raised when 'args_schema' is missing or has an incorrect type annotation."""
-
-
-SCHEMA_T = TypeVar("SCHEMA_T", bound=Union[str, BaseModel])
 OUTPUT_T = TypeVar("OUTPUT_T")
 
 
 class BaseStructuredTool(
     GenericModel,
-    Generic[SCHEMA_T, OUTPUT_T],
+    Generic[OUTPUT_T],
     BaseModel,
 ):
     """Parent class for all structured tools."""
@@ -50,7 +38,7 @@ class BaseStructuredTool(
     return_direct: bool = False
     verbose: bool = False
     callback_manager: BaseCallbackManager = Field(default_factory=get_callback_manager)
-    args_schema: Type[SCHEMA_T]  # :meta private:
+    args_schema: Type[BaseModel]  # :meta private:
 
     class Config:
         """Configuration for this pydantic object."""
@@ -60,19 +48,7 @@ class BaseStructuredTool(
 
     @property
     def args(self) -> Dict:
-        if isinstance(self.args_schema, BaseModel):
-            return self.args_schema.schema()["properties"]
-        else:
-            return {"tool_input": "str"}
-
-    def _parse_input(self, tool_input: Dict) -> SCHEMA_T:
-        """Load the tool's input into a pydantic model."""
-        if not issubclass(self.args_schema, BaseModel):
-            raise ValueError(
-                f"Tool with args_schema of type {self.args_schema} must overwrite _parse_input."
-            )
-        # Ignore type because mypy doesn't connect the subclass to the generic SCHEMA_T
-        return self.args_schema.parse_obj(tool_input)  # type: ignore
+        return self.args_schema.schema()["properties"]
 
     def _get_verbosity(
         self,
@@ -84,12 +60,16 @@ class BaseStructuredTool(
             verbose_ = self.verbose
         return verbose_
 
+    def _prepare_input(self, input_: dict) -> Tuple[Sequence, Dict]:
+        """Prepare the args and kwargs for the tool."""
+        return (), input_
+
     @abstractmethod
-    def _run(self, input_: SCHEMA_T) -> OUTPUT_T:
+    def _run(self, *args: Any, **kwargs: Any) -> OUTPUT_T:
         """Use the tool."""
 
     @abstractmethod
-    async def _arun(self, input_: SCHEMA_T) -> OUTPUT_T:
+    async def _arun(self, *args: Any, **kwargs: Any) -> OUTPUT_T:
         """Use the tool asynchronously."""
 
     def run(
@@ -101,7 +81,7 @@ class BaseStructuredTool(
         **kwargs: Any,
     ) -> OUTPUT_T:
         """Run the tool."""
-        parsed_input = self._parse_input(tool_input)
+        self.args_schema.parse_obj(tool_input)
         verbose_ = self._get_verbosity(verbose)
         self.callback_manager.on_tool_start(
             {"name": self.name, "description": self.description},
@@ -111,7 +91,8 @@ class BaseStructuredTool(
             **kwargs,
         )
         try:
-            observation = self._run(parsed_input)
+            args, kwargs = self._prepare_input(tool_input)
+            observation = self._run(*args, **kwargs)
         except (Exception, KeyboardInterrupt) as e:
             self.callback_manager.on_tool_error(e, verbose=verbose_)
             raise e
@@ -129,20 +110,20 @@ class BaseStructuredTool(
         **kwargs: Any,
     ) -> OUTPUT_T:
         """Run the tool asynchronously."""
-        parsed_input = self._parse_input(tool_input)
+        self.args_schema.parse_obj(tool_input)
         verbose_ = self._get_verbosity(verbose)
         await async_or_sync_call(
             self.callback_manager.on_tool_start,
             {"name": self.name, "description": self.description},
-            str(parsed_input),
+            str(tool_input),
             verbose=verbose_,
             color=start_color,
             is_async=self.callback_manager.is_async,
             **kwargs,
         )
         try:
-            # We then call the tool on the tool input to get an observation
-            observation = await self._arun(parsed_input)
+            args, kwargs = self._prepare_input(tool_input)
+            observation = await self._arun(*args, **kwargs)
         except (Exception, KeyboardInterrupt) as e:
             await async_or_sync_call(
                 self.callback_manager.on_tool_error,
@@ -198,7 +179,7 @@ def create_schema_from_function(model_name: str, func: Callable) -> Type[BaseMod
     )
 
 
-class StructuredTool(BaseStructuredTool[BaseModel, Any]):
+class StructuredTool(BaseStructuredTool[Any]):
     """StructuredTool that takes in function or coroutine directly."""
 
     func: Callable[..., Any]
@@ -206,13 +187,6 @@ class StructuredTool(BaseStructuredTool[BaseModel, Any]):
     coroutine: Optional[Callable[..., Awaitable[Any]]] = None
     """The asynchronous version of the function."""
     args_schema: Type[BaseModel]  # :meta private:
-
-    @validator("func", pre=True, always=True)
-    def validate_func_not_partial(cls, func: Callable) -> Callable:
-        """Check that the function is not a partial."""
-        if isinstance(func, partial):
-            raise ValueError("Partial functions not yet supported in structured tools.")
-        return func
 
     @property
     def args(self) -> dict:
@@ -222,14 +196,14 @@ class StructuredTool(BaseStructuredTool[BaseModel, Any]):
             inferred_model = validate_arguments(self.func).model  # type: ignore
             return get_filtered_args(inferred_model, self.func)
 
-    def _run(self, tool_input: BaseModel) -> Any:
+    def _run(self, *args: Any, **kwargs: Any) -> Any:
         """Use the tool."""
-        return self.func(**tool_input.dict())
+        return self.func(*args, **kwargs)
 
-    async def _arun(self, tool_input: BaseModel) -> Any:
+    async def _arun(self, *args: Any, **kwargs: Any) -> Any:
         """Use the tool asynchronously."""
         if self.coroutine:
-            return await self.coroutine(**tool_input.dict())
+            return await self.coroutine(*args, **kwargs)
         raise NotImplementedError(f"StructuredTool {self.name} does not support async")
 
     @classmethod
@@ -282,7 +256,6 @@ def structured_tool(
     *args: Union[str, Callable],
     return_direct: bool = False,
     args_schema: Optional[Type[BaseModel]] = None,
-    infer_schema: bool = True,
 ) -> Callable:
     """Make tools out of functions, can be used with or without arguments.
 
@@ -290,10 +263,8 @@ def structured_tool(
         *args: The arguments to the tool.
         return_direct: Whether to return directly from the tool rather
             than continuing the agent loop.
-        args_schema: optional argument schema for user to specify
-        infer_schema: Whether to infer the schema of the arguments from
-            the function's signature. This also makes the resultant tool
-            accept a dictionary input to its `run()` function.
+        args_schema: Optional argument schema for user to specify. If
+            none, will infer the schema from the function's signature.
 
     Requires:
         - Function must be of type (str) -> str
@@ -320,7 +291,6 @@ def structured_tool(
                 func=func,
                 args_schema=args_schema,
                 return_direct=return_direct,
-                infer_schema=infer_schema,
             )
 
         return _make_tool

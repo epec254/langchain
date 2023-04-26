@@ -13,7 +13,7 @@ from langchain.docstore.base import Docstore
 from langchain.docstore.document import Document
 from langchain.llms.base import BaseLLM
 from langchain.prompts.base import BasePromptTemplate
-from langchain.tools.base import BaseTool
+from langchain.tools.structured import BaseStructuredTool
 
 
 class ReActDocstoreAgent(Agent):
@@ -31,12 +31,12 @@ class ReActDocstoreAgent(Agent):
         return AgentType.REACT_DOCSTORE
 
     @classmethod
-    def create_prompt(cls, tools: Sequence[BaseTool]) -> BasePromptTemplate:
+    def create_prompt(cls, tools: Sequence[BaseStructuredTool]) -> BasePromptTemplate:
         """Return default prompt."""
         return WIKI_PROMPT
 
     @classmethod
-    def _validate_tools(cls, tools: Sequence[BaseTool]) -> None:
+    def _validate_tools(cls, tools: Sequence[BaseStructuredTool]) -> None:
         if len(tools) != 2:
             raise ValueError(f"Exactly two tools must be specified, but got {tools}")
         tool_names = {tool.name for tool in tools}
@@ -113,12 +113,12 @@ class ReActTextWorldAgent(ReActDocstoreAgent):
     """Agent for the ReAct TextWorld chain."""
 
     @classmethod
-    def create_prompt(cls, tools: Sequence[BaseTool]) -> BasePromptTemplate:
+    def create_prompt(cls, tools: Sequence[BaseStructuredTool]) -> BasePromptTemplate:
         """Return default prompt."""
         return TEXTWORLD_PROMPT
 
     @classmethod
-    def _validate_tools(cls, tools: Sequence[BaseTool]) -> None:
+    def _validate_tools(cls, tools: Sequence[BaseStructuredTool]) -> None:
         if len(tools) != 1:
             raise ValueError(f"Exactly one tool must be specified, but got {tools}")
         tool_names = {tool.name for tool in tools}

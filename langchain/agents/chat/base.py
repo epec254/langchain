@@ -2,7 +2,7 @@ from typing import Any, List, Optional, Sequence, Tuple
 
 from pydantic import Field
 
-from langchain.agents.agent import Agent, AgentOutputParser
+from langchain.agents.agent import Agent, AgentOutputParser, validate_all_base_tools
 from langchain.agents.chat.output_parser import ChatOutputParser
 from langchain.agents.chat.prompt import FORMAT_INSTRUCTIONS, PREFIX, SUFFIX
 from langchain.callbacks.base import BaseCallbackManager
@@ -14,7 +14,7 @@ from langchain.prompts.chat import (
     SystemMessagePromptTemplate,
 )
 from langchain.schema import AgentAction, BaseLanguageModel
-from langchain.tools import BaseTool
+from langchain.tools.structured import BaseStructuredTool
 
 
 class ChatAgent(Agent):
@@ -56,7 +56,7 @@ class ChatAgent(Agent):
     @classmethod
     def create_prompt(
         cls,
-        tools: Sequence[BaseTool],
+        tools: Sequence[BaseStructuredTool],
         prefix: str = PREFIX,
         suffix: str = SUFFIX,
         format_instructions: str = FORMAT_INSTRUCTIONS,
@@ -75,10 +75,15 @@ class ChatAgent(Agent):
         return ChatPromptTemplate(input_variables=input_variables, messages=messages)
 
     @classmethod
+    def _validate_tools(cls, tools: Sequence[BaseStructuredTool]) -> None:
+        super()._validate_tools(tools)
+        validate_all_base_tools(cls.__name__, tools)
+
+    @classmethod
     def from_llm_and_tools(
         cls,
         llm: BaseLanguageModel,
-        tools: Sequence[BaseTool],
+        tools: Sequence[BaseStructuredTool],
         callback_manager: Optional[BaseCallbackManager] = None,
         output_parser: Optional[AgentOutputParser] = None,
         prefix: str = PREFIX,
